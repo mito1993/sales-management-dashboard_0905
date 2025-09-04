@@ -245,83 +245,110 @@ const App = () => {
     const toggleTheme = () => setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
 
     // ===== ▼▼▼ データ加工ロジックを修正 ▼▼▼ =====
-    const processedData = useMemo(() => {
-        const getFiscalYear = (date) => {
-            if (!date || isNaN(date.getTime())) return null;
-            const year = date.getFullYear();
-            const month = date.getMonth(); // 0-11
-            const fiscalYearStart = month >= 3 ? year : year - 1;
-            return fiscalYearStart - 2022; // 第1期(2023年度)=1, 第2期(2024年度)=2, 第3期(2025年度)=3
-        };
+// ===== ▼▼▼ ここからコピー ▼▼▼ =====
+  const processedData = useMemo(() => {
+    // 日付から会計年度を取得する関数（変更なし）
+    const getFiscalYear = (date) => {
+      if (!date || isNaN(date.getTime())) return null;
+      const year = date.getFullYear();
+      const month = date.getMonth(); // 0-11
+      const fiscalYearStart = month >= 3 ? year : year - 1;
+      return fiscalYearStart - 2022; // 第1期(2023年度)=1, ...
+    };
 
-        const filteredDeals = deals.filter(deal => {
-            // 案件フェーズのフィルタリングを追加
-            const phaseMatch = selectedPhases.length === 0 || selectedPhases.includes(deal.phase);
-            if (!phaseMatch) return false;
-            
-            const fiscalYear = getFiscalYear(deal.deliveryMonth || deal.orderMonth);
-            const yearMatch = fiscalYear === selectedFiscalYear;
-            const repMatch = selectedSalesReps.length === 0 || selectedSalesReps.includes(deal.salesRep);
-            const channelMatch = selectedChannels.length === 0 || selectedChannels.includes(deal.channel);
-            return yearMatch && repMatch && channelMatch;
-        });
+    // グラフの月別データを集計する関数（変更なし）
+    const aggregateMonthlyData = (sourceDeals, dateField) => {
+      const MONTH_LABELS = ['4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月', '1月', '2月', '3月'];
+      const monthlyTotals = new Array(12).fill(0).map(() => ({ sales: 0, profit: 0 }));
+      
+      sourceDeals.forEach(deal => {
+        const date = deal[dateField];
+        if (!date) return;
+        
+        const month = date.getMonth();
+        const fiscalMonthIndex = (month - 3 + 12) % 12;
+        monthlyTotals[fiscalMonthIndex].sales += deal.sales;
+        monthlyTotals[fiscalMonthIndex].profit += deal.profit;
+      });
 
-        const aggregateMonthlyData = (sourceDeals, dateField) => {
-            const MONTH_LABELS = ['4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月', '1月', '2月', '3月'];
-            const monthlyTotals = new Array(12).fill(0).map(() => ({ sales: 0, profit: 0 }));
-            
-            sourceDeals.forEach(deal => {
-                const date = deal[dateField];
-                if (!date) return;
-                
-                const month = date.getMonth();
-                const fiscalMonthIndex = (month - 3 + 12) % 12;
-                monthlyTotals[fiscalMonthIndex].sales += deal.sales;
-                monthlyTotals[fiscalMonthIndex].profit += deal.profit;
-            });
+      return {
+        labels: MONTH_LABELS,
+        datasets: [
+          { label: '売上高', data: monthlyTotals.map(m => m.sales), backgroundColor: 'rgba(59, 130, 246, 0.7)' },
+          { label: '粗利金額', data: monthlyTotals.map(m => m.profit), backgroundColor: 'rgba(22, 163, 74, 0.7)' },
+        ],
+      };
+    };
+    
+    // --- ここからロジックを分離 ---
 
-            return {
-                labels: MONTH_LABELS,
-                datasets: [
-                    { label: '売上高', data: monthlyTotals.map(m => m.sales), backgroundColor: 'rgba(59, 130, 246, 0.7)' },
-                    { label: '粗利金額', data: monthlyTotals.map(m => m.profit), backgroundColor: 'rgba(22, 163, 74, 0.7)' },
-                ],
-            };
-        };
-        
-        const orderChartData = aggregateMonthlyData(filteredDeals, 'orderMonth');
-        const deliveryChartData = aggregateMonthlyData(filteredDeals, 'deliveryMonth');
-        
-        const channelDataMap = filteredDeals.reduce((acc, deal) => {
-            if(deal.channel) {
-                acc[deal.channel] = (acc[deal.channel] || 0) + deal.profit;
-            }
-            return acc;
-        }, {});
-        
-        const doughnutChartData = {
-            labels: Object.keys(channelDataMap),
-            datasets: [{ data: Object.values(channelDataMap), backgroundColor: ['#4ade80', '#22d3ee', '#818cf8', '#f87171', '#fbbf24'], borderWidth: 2 }],
-        };
-        
-        const repPerformanceMap = filteredDeals.reduce((acc, deal) => {
-            if(deal.salesRep) {
-                if (!acc[deal.salesRep]) {
-                    acc[deal.salesRep] = { dealCount: 0, totalSales: 0, totalProfit: 0 };
-                }
-                acc[deal.salesRep].dealCount++;
-                acc[deal.salesRep].totalSales += deal.sales;
-                acc[deal.salesRep].totalProfit += deal.profit;
-            }
-            return acc;
-        }, {});
+    // 1. 【受注ベース】のデータセットを作成
+    const dealsForOrderChart = deals.filter(deal => {
+      // 共通のフィルタを適用
+      const phaseMatch = selectedPhases.length === 0 || selectedPhases.includes(deal.phase);
+      const repMatch = selectedSalesReps.length === 0 || selectedSalesReps.includes(deal.salesRep);
+      const channelMatch = selectedChannels.length === 0 || selectedChannels.includes(deal.channel);
+      if (!(phaseMatch && repMatch && channelMatch)) return false;
 
-        const repPerformanceData = Object.entries(repPerformanceMap).map(([salesRep, data]) => ({
-            salesRep, ...data, avgSale: data.dealCount > 0 ? data.totalSales / data.dealCount : 0,
-        }));
-        
-        return { orderChartData, deliveryChartData, doughnutChartData, repPerformanceData };
-    }, [deals, selectedFiscalYear, selectedSalesReps, selectedChannels, selectedPhases]);
+      // ★受注月を基準に年度フィルタを適用
+      const fiscalYear = getFiscalYear(deal.orderMonth);
+      return fiscalYear === selectedFiscalYear;
+    });
+
+    // 2. 【納品ベース】のデータセットを作成
+    const dealsForDeliveryChart = deals.filter(deal => {
+      // 共通のフィルタを適用
+      const phaseMatch = selectedPhases.length === 0 || selectedPhases.includes(deal.phase);
+      const repMatch = selectedSalesReps.length === 0 || selectedSalesReps.includes(deal.salesRep);
+      const channelMatch = selectedChannels.length === 0 || selectedChannels.includes(deal.channel);
+      if (!(phaseMatch && repMatch && channelMatch)) return false;
+
+      // ★納品月を基準に年度フィルタを適用
+      const fiscalYear = getFiscalYear(deal.deliveryMonth);
+      return fiscalYear === selectedFiscalYear;
+    });
+    
+    // --- 各グラフ・表に、分離したデータセットを渡す ---
+
+    // 受注月グラフには「受注ベース」のデータを使用
+    const orderChartData = aggregateMonthlyData(dealsForOrderChart, 'orderMonth');
+
+    // 納品月グラフには「納品ベース」のデータを使用
+    const deliveryChartData = aggregateMonthlyData(dealsForDeliveryChart, 'deliveryMonth');
+    
+    // ドーナツグラフ（商流別）は納品ベースなので、「納品ベース」のデータを使用
+    const channelDataMap = dealsForDeliveryChart.reduce((acc, deal) => {
+      if(deal.channel) {
+        acc[deal.channel] = (acc[deal.channel] || 0) + deal.profit;
+      }
+      return acc;
+    }, {});
+    
+    const doughnutChartData = {
+      labels: Object.keys(channelDataMap),
+      datasets: [{ data: Object.values(channelDataMap), backgroundColor: ['#4ade80', '#22d3ee', '#818cf8', '#f87171', '#fbbf24'], borderWidth: 2 }],
+    };
+    
+    // 担当者別実績テーブルも納品ベースなので、「納品ベース」のデータを使用
+    const repPerformanceMap = dealsForDeliveryChart.reduce((acc, deal) => {
+      if(deal.salesRep) {
+        if (!acc[deal.salesRep]) {
+          acc[deal.salesRep] = { dealCount: 0, totalSales: 0, totalProfit: 0 };
+        }
+        acc[deal.salesRep].dealCount++;
+        acc[deal.salesRep].totalSales += deal.sales;
+        acc[deal.salesRep].totalProfit += deal.profit;
+      }
+      return acc;
+    }, {});
+
+    const repPerformanceData = Object.entries(repPerformanceMap).map(([salesRep, data]) => ({
+      salesRep, ...data, avgSale: data.dealCount > 0 ? data.totalSales / data.dealCount : 0,
+    }));
+    
+    return { orderChartData, deliveryChartData, doughnutChartData, repPerformanceData };
+  }, [deals, selectedFiscalYear, selectedSalesReps, selectedChannels, selectedPhases]);
+// ===== ▲▲▲ ここまでコピー ▲▲▲ =====
 
     const sortedRepPerformanceData = useMemo(() => {
         let sortableItems = [...processedData.repPerformanceData];
@@ -343,6 +370,36 @@ const App = () => {
         }
         setSortConfig({ key, direction });
     }, [sortConfig]);
+      // ===== ▼▼▼ CSVダウンロード処理を追加 ▼▼▼ =====
+    const handleDownloadCsv = async () => {
+      try {
+        const baseUrl = import.meta.env.VITE_API_BASE_URL;
+        // APIサーバーのCSVダウンロード用URL
+        const url = new URL('/api/sales-data/csv', baseUrl); 
+      
+        const response = await axios.get(url.href, {
+          responseType: 'blob', // データをバイナリ形式で受け取る
+        });
+
+        // ダウンロード用のリンクを作成してクリックさせる
+        const blob = new Blob([response.data], { type: 'text/csv; charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+      
+        // ダウンロードするファイル名を指定
+        link.setAttribute('download', 'sales-data.csv');
+      
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+      } catch (error) {
+        console.error("CSVのダウンロードに失敗しました。", error);
+        // 必要であればユーザーにエラーメッセージを表示する処理を追加
+        alert("データのダウンロードに失敗しました。");
+      }
+    };
+    // ==========================================
 
     if (isLoading) return <div className="min-h-screen bg-slate-900 flex justify-center items-center text-white">データを読み込み中...</div>;
     if (error) return <div className="min-h-screen bg-slate-900 flex justify-center items-center text-red-500">エラー: {error}</div>;
@@ -379,6 +436,20 @@ const App = () => {
                             </FilterSection>
                             {/* ======================================= */}
                         </div>
+                          {/* ===== ▼▼▼ CSVダウンロード機能を追加 ▼▼▼ ===== */}
+                          <div className="mt-4 pt-4 border-t border-slate-700/50 flex justify-end">
+                             <button
+                               onClick={handleDownloadCsv}
+                               className={`px-4 py-2 rounded-md font-semibold text-sm transition-colors ${
+                               theme === 'dark'
+                                   ? 'bg-slate-600 text-slate-200 hover:bg-cyan-600'
+                                   : 'bg-gray-200 text-gray-700 hover:bg-indigo-500 hover:text-white'
+                               }`}
+                             >
+                               全データダウンロード (CSV)
+                             </button>
+                           </div>
+                           {/* ======================================= */}
                     </Card>
                     <Card title="月別推移" theme={theme}>
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">

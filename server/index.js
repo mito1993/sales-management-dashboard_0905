@@ -75,6 +75,54 @@ app.get('/api/sales-data', async (req, res) => {
   }
 });
 
+// ===== CSVダウンロード用のAPIエンドポイントを追加 =====
+const { Parser } = require('json2csv');
+
+app.get('/api/sales-data/csv', async (req, res) => {
+  console.log('--- [/api/sales-data/csv] CSVダウンロードリクエスト受信 ---');
+
+  // キャッシュされたデータがあればそれを使用し、なければスプレッドシートから取得
+  const now = Date.now();
+  if (!cachedData || (now - lastFetchTime >= CACHE_DURATION)) {
+    console.log('--- CSV用に最新データをスプレッドシートから取得します ---');
+    try {
+      await doc.loadInfo();
+      const sheet = doc.sheetsByIndex[0];
+      const rows = await sheet.getRows();
+      cachedData = rows.map(row => ({
+        channel: row.get('商流'),
+        sales: parseFloat(row.get('売上（税抜）')) || 0,
+        profit: parseFloat(row.get('粗利（税抜）')) || 0,
+        phase: row.get('案件フェーズ'),
+        orderMonth: row.get('受注月'),
+        deliveryMonth: row.get('納品月'),
+        salesRep: row.get('営業担当'),
+      }));
+      lastFetchTime = now;
+    } catch (error) {
+      console.error('CSVデータ取得中にエラーが発生しました', error);
+      return res.status(500).json({ error: 'Failed to fetch data for CSV' });
+    }
+  }
+
+  try {
+    // JSONデータをCSVに変換
+    const json2csvParser = new Parser();
+    const csv = json2csvParser.parse(cachedData);
+
+    // CSVファイルをダウンロードさせるためのヘッダーを設定
+    res.header('Content-Type', 'text/csv; charset=utf-8');
+    res.attachment('sales-data.csv'); // ダウンロード時のファイル名
+    res.send(csv); // CSVデータを送信
+
+    console.log('--- CSVデータの送信完了 ---');
+
+  } catch (err) {
+    console.error('CSV変換または送信中にエラーが発生しました', err);
+    res.status(500).send("Error generating CSV");
+  }
+});
+
 console.log('--- [6] サーバー起動準備完了、listenを開始します ---');
 
 app.listen(PORT, () => {
