@@ -1,0 +1,9 @@
+# 依存関係ファイル
+/node_modules
+/client/node_modules
+/server/node_modules
+
+# 環境変数ファイル
+.env
+/client/.env
+/server/.env
